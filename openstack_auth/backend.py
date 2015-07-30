@@ -227,18 +227,24 @@ class KeystoneBackend(object):
 
         if request is not None:
             request.session['unscoped_token'] = unscoped_token
-            if domain_auth_ref:
-                # check django session engine, if using cookies, this will not
-                # work, as it will overflow the cookie so don't add domain
-                # scoped token to the session and put error in the log
-                if utils.using_cookie_backed_sessions():
-                    LOG.error('Using signed cookies as SESSION_ENGINE with '
-                              'OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT is '
-                              'enabled. This disables the ability to '
-                              'perform identity operations due to cookie size '
-                              'constraints.')
-                else:
-                    request.session['domain_token'] = domain_auth_ref
+
+            ##############################################################
+            # No need to store the domain scoped token in the session.
+            # We will rescope as needed.
+            ##############################################################
+
+            # if domain_auth_ref:
+            #     # check django session engine, if using cookies, this will not
+            #     # work, as it will overflow the cookie so don't add domain
+            #     # scoped token to the session and put error in the log
+            #     if utils.using_cookie_backed_sessions():
+            #         LOG.error('Using signed cookies as SESSION_ENGINE with '
+            #                   'OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT is '
+            #                   'enabled. This disables the ability to '
+            #                   'perform identity operations due to cookie size '
+            #                   'constraints.')
+            #     else:
+            #         request.session['domain_token'] = domain_auth_ref
 
             request.user = user
             timeout = getattr(settings, "SESSION_TIMEOUT", 3600)
