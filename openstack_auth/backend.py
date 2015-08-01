@@ -128,21 +128,10 @@ class KeystoneBackend(object):
         # Check expiry for our unscoped auth ref.
         self.check_auth_expiry(unscoped_auth_ref)
 
-        # domain support can require domain scoped tokens to perform
-        # identity operations depending on the policy files being used
-        # for keystone.
-        domain_auth = None
-        domain_auth_ref = None
-        if utils.get_keystone_version() >= 3 and 'user_domain_name' in kwargs:
-            try:
-                token = unscoped_auth_ref.auth_token
-                domain_auth = utils.get_token_auth_plugin(
-                    auth_url,
-                    token,
-                    domain_name=kwargs['user_domain_name'])
-                domain_auth_ref = domain_auth.get_access(session)
-            except Exception:
-                LOG.debug('Error getting domain scoped token.', exc_info=True)
+        # Acquires a domain scoped token
+        domain_auth, domain_auth_ref = self.get_domain_auth(auth_url, kwargs,
+                                                            session,
+                                                            unscoped_auth_ref)
 
         projects = plugin.list_projects(session,
                                         unscoped_auth,
@@ -227,18 +216,9 @@ class KeystoneBackend(object):
 
         if request is not None:
             request.session['unscoped_token'] = unscoped_token
-            if domain_auth_ref:
-                # check django session engine, if using cookies, this will not
-                # work, as it will overflow the cookie so don't add domain
-                # scoped token to the session and put error in the log
-                if utils.using_cookie_backed_sessions():
-                    LOG.error('Using signed cookies as SESSION_ENGINE with '
-                              'OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT is '
-                              'enabled. This disables the ability to '
-                              'perform identity operations due to cookie size '
-                              'constraints.')
-                else:
-                    request.session['domain_token'] = domain_auth_ref
+
+            # adds the domain scoped token to the session
+            self.persist_to_session(domain_auth_ref, request)
 
             request.user = user
             timeout = getattr(settings, "SESSION_TIMEOUT", 3600)
@@ -254,6 +234,38 @@ class KeystoneBackend(object):
 
         LOG.debug('Authentication completed.')
         return user
+
+    def persist_to_session(self, domain_auth_ref, request):
+        if domain_auth_ref:
+            # check django session engine, if using cookies, this will not
+            # work, as it will overflow the cookie so don't add domain
+            # scoped token to the session and put error in the log
+            if utils.using_cookie_backed_sessions():
+                LOG.error('Using signed cookies as SESSION_ENGINE with '
+                          'OPENSTACK_KEYSTONE_MULTIDOMAIN_SUPPORT is '
+                          'enabled. This disables the ability to '
+                          'perform identity operations due to cookie size '
+                          'constraints.')
+            else:
+                request.session['domain_token'] = domain_auth_ref
+
+    def get_domain_auth(self, auth_url, kwargs, session, unscoped_auth_ref):
+        # domain support can require domain scoped tokens to perform
+        # identity operations depending on the policy files being used
+        # for keystone.
+        domain_auth = None
+        domain_auth_ref = None
+        if utils.get_keystone_version() >= 3 and 'user_domain_name' in kwargs:
+            try:
+                token = unscoped_auth_ref.auth_token
+                domain_auth = utils.get_token_auth_plugin(
+                    auth_url,
+                    token,
+                    domain_name=kwargs['user_domain_name'])
+                domain_auth_ref = domain_auth.get_access(session)
+            except Exception:
+                LOG.debug('Error getting domain scoped token.', exc_info=True)
+        return domain_auth, domain_auth_ref
 
     def get_group_permissions(self, user, obj=None):
         """Returns an empty set since Keystone doesn't support "groups"."""
