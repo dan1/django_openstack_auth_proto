@@ -77,7 +77,10 @@ def login(request, template_name=None, extra_context=None, **kwargs):
     initial = {}
     current_region = request.session.get('region_endpoint', None)
     requested_region = request.GET.get('region', None)
-    regions = dict(getattr(settings, "AVAILABLE_REGIONS", []))
+
+    region_list = getattr(settings, "AVAILABLE_REGIONS", [])
+    # { region: cluster }
+    regions = dict((region[0], region[1]) for region in region_list)
     if requested_region in regions and requested_region != current_region:
         initial.update({'region': requested_region})
 
@@ -121,12 +124,45 @@ def login(request, template_name=None, extra_context=None, **kwargs):
     return res
 
 
+def retrieve_websso_auth_url(request):
+    ##############################################
+    # reads from Horizon's local_settings.py
+    ##############################################
+    websso_auth_url = getattr(settings, 'WEBSSO_KEYSTONE_URL')
+
+    ###########################################################################
+    # AVAILABLE_REGIONS = [
+    #    ('http://cluster1.example.com:5000/v2.0', 'cluster1', 'publicURL1'),
+    #    ('http://cluster2.example.com:5000/v2.0', 'cluster2', 'publicURL2'),
+    #]
+    ###########################################################################
+
+    # {region: publicURL}
+    region_list = getattr(settings, "AVAILABLE_REGIONS", [])
+    regions = dict((region[0], region[2]) for region in region_list)
+
+    if websso_auth_url and not regions:
+        return websso_auth_url
+
+    if regions:
+        ######################################################
+        # find the current region and pull out the publicURL
+        ######################################################
+        current_region = request.session.get('region_endpoint', None)
+        requested_region = request.GET.get('region', None)
+        selected_region = current_region or requested_region
+        return regions[selected_region]
+
+    # fall back on the referer
+    return request.META.get('HTTP_REFERER', settings.OPENSTACK_KEYSTONE_URL)
+
+
 @sensitive_post_parameters()
 @csrf_exempt
 @never_cache
 def websso(request):
     """Logs a user in using a token from Keystone's POST."""
-    referer = request.META.get('HTTP_REFERER', settings.OPENSTACK_KEYSTONE_URL)
+    referer = retrieve_websso_auth_url(request)
     auth_url = utils.clean_up_auth_url(referer)
     token = request.POST.get('token')
     try:
